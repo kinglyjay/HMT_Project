@@ -5,7 +5,7 @@ import time
 
 st.set_page_config(page_title="HMT: FDM vs SOR vs Analytical", layout="wide")
 
-st.title("🌡️ 2D Heat Conduction: Comparison of Solvers")
+st.title("2D Heat Conduction: Comparison of Solvers")
 st.markdown("Comparing **Gauss-Seidel**, **SOR (Successive Over-Relaxation)**, and the **Analytical Fourier Series**.")
 
 # --- SIDEBAR: CONTROLS ---
