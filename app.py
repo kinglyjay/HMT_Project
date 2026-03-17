@@ -60,7 +60,7 @@ def solve_analytical(nx, ny, top, bottom, side, terms):
     x = np.linspace(0, 1, nx)
     y = np.linspace(0, 1, ny)
     X, Y = np.meshgrid(x, y)
-    T_ana = np.zeros((ny, nx))
+    T_ana = np.full((ny, nx), side)
 
     def fourier_sum(X_g, Y_g, T_bc):
         res = np.zeros_like(X_g)
