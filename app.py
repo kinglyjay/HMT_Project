@@ -8,7 +8,7 @@ st.set_page_config(page_title="HMT: FDM vs SOR vs Analytical", layout="wide")
 st.title("2D Heat Conduction: Comparison of Solvers")
 st.markdown("Comparing **Gauss-Seidel**, **SOR (Successive Over-Relaxation)**, and the **Analytical Fourier Series**.")
 
-# --- SIDEBAR: CONTROLS ---
+#sidebar controls
 with st.sidebar:
     st.header("1. Boundary Conditions (°C)")
     t_top = st.number_input("Top Temp", value=100.0)
@@ -23,7 +23,7 @@ with st.sidebar:
     st.header("3. Analytical Terms")
     n_terms = st.slider("Fourier Terms", 1, 100, 50)
 
-# --- SOLVER LOGIC ---
+#solverpart
 
 def solve_numerical(nx, ny, top, bottom, side, method="Gauss-Seidel", w=1.0):
     T = np.full((ny, nx), (top + bottom + side) / 3)
@@ -76,12 +76,12 @@ def solve_analytical(nx, ny, top, bottom, side, terms):
     T_ana += side
     return T_ana
 
-# --- EXECUTION ---
+#body
 T_num, iterations, exec_time = solve_numerical(nx, nx, t_top, t_bottom, t_side, solver_type, omega)
 T_ana = solve_analytical(nx, nx, t_top, t_bottom, t_side, n_terms)
 error = np.abs(T_num - T_ana)
 
-# --- VISUALIZATION ---
+#graphsandplots
 col1, col2 = st.columns(2)
 
 with col1:
