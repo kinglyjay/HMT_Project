@@ -3,103 +3,123 @@ import numpy as np
 import plotly.graph_objects as go
 import time
 
-st.set_page_config(page_title="HMT: FDM vs SOR vs Analytical", layout="wide")
+# --- PAGE CONFIG ---
+st.set_page_config(page_title="2D Convective Heat Solver", layout="wide")
 
-st.title("2D Heat Conduction: Comparison of Solvers")
-st.markdown("Comparing **Gauss-Seidel**, **SOR (Successive Over-Relaxation)**, and the **Analytical Fourier Series**.")
+st.title("2D Heat Conduction: Robin Boundary Condition")
+st.markdown("Comparing **Numerical (FDM)** and **Analytical (Fourier Series)** solutions.")
 
-#sidebar controls
+# --- SIDEBAR CONTROLS ---
 with st.sidebar:
-    st.header("1. Boundary Conditions (°C)")
-    t_top = st.number_input("Top Temp", value=100.0)
-    t_bottom = st.number_input("Bottom Temp", value=20.0)
-    t_side = st.number_input("Side Temps (L/R)", value=50.0)
+    st.header("1. Boundary Temperatures (°C)")
+    t_inf = st.number_input("Ambient Fluid Temp (T_inf)", value=100.0)
+    t_bottom = st.number_input("Bottom Base Temp", value=20.0)
+    t_side = st.number_input("Left/Right Side Temp", value=50.0)
     
-    st.header("2. Numerical Controls")
-    nx = st.slider("Grid Points (nx=ny)", 10, 60, 40)
+    st.header("2. Material & Convection")
+    h_coeff = st.number_input("Convection Coeff (h)", value=50.0)
+    k_cond = st.number_input("Thermal Cond. (k)", value=15.0)
+    
+    st.header("3. Numerical Controls")
+    nx = st.slider("Grid Resolution (N x N)", 10, 60, 40)
     solver_type = st.radio("Select Solver", ["Gauss-Seidel", "SOR"])
-    omega = st.slider("Relaxation Factor (ω)", 1.0, 1.95, 1.5, step=0.05) if solver_type == "SOR" else 1.0
+    w_opt = 2 / (1 + np.sin(np.pi/nx))
+    omega = st.slider("Relaxation Factor (ω)", 1.0, 1.95, float(round(w_opt, 2))) if solver_type == "SOR" else 1.0
     
-    st.header("3. Analytical Terms")
-    n_terms = st.slider("Fourier Terms", 1, 100, 50)
+    st.header("4. Analytical Settings")
+    n_terms = st.slider("Fourier Terms", 10, 100, 50)
 
-#solverpart
-
-def solve_numerical(nx, ny, top, bottom, side, method="Gauss-Seidel", w=1.0):
-    T = np.full((ny, nx), (top + bottom + side) / 3)
-    T[-1, :] = top
-    T[0, :] = bottom
-    T[:, 0] = side
-    T[:, -1] = side
+# --- NUMERICAL SOLVER ---
+def solve_numerical_convective(n, t_inf, t_b, t_s, h, k, method, w):
+    dx = 1.0 / (n - 1)
+    Bi = (h * dx) / k
+    T = np.full((n, n), (t_inf + t_b + t_s) / 3.0)
+    T[0, :] = t_b
+    T[:, 0] = t_s
+    T[:, -1] = t_s
     
     tol = 1e-5
     max_iter = 5000
-    it_count = 0
     start_time = time.time()
 
     for it in range(max_iter):
         T_old = T.copy()
-        it_count = it
-        for i in range(1, ny-1):
-            for j in range(1, nx-1):
-                # The GS base calculation
-                T_gs = 0.25 * (T[i+1, j] + T[i-1, j] + T[i, j+1] + T[i, j-1])
-                
-                if method == "SOR":
-                    # SOR Formula: T_new = (1-w)*T_old + w*T_gs
-                    T[i, j] = (1 - w) * T[i, j] + w * T_gs
-                else:
-                    T[i, j] = T_gs
-        
-        if np.max(np.abs(T - T_old)) < tol:
-            break
+        # Internal update
+        T_int = 0.25 * (T[2:, 1:-1] + T[:-2, 1:-1] + T[1:-1, 2:] + T[1:-1, :-2])
+        if method == "SOR":
+            T[1:-1, 1:-1] = (1 - w) * T[1:-1, 1:-1] + w * T_int
+        else:
+            T[1:-1, 1:-1] = T_int
             
-    return T, it_count, time.time() - start_time
+        # Top Convection update
+        T_top_new = (2*T[-2, 1:-1] + T[-1, :-2] + T[-1, 2:] + 2*Bi*t_inf) / (4 + 2*Bi)
+        if method == "SOR":
+            T[-1, 1:-1] = (1 - w) * T[-1, 1:-1] + w * T_top_new
+        else:
+            T[-1, 1:-1] = T_top_new
 
-def solve_analytical(nx, ny, top, bottom, side, terms):
-    x = np.linspace(0, 1, nx)
-    y = np.linspace(0, 1, ny)
+        if np.max(np.abs(T - T_old)) < tol:
+            return T, it, time.time() - start_time
+    return T, max_iter, time.time() - start_time
+
+# --- STABILIZED ANALYTICAL SOLVER ---
+def solve_analytical_convective(n, t_inf, t_b, t_s, h, k, terms):
+    L, H = 1.0, 1.0
+    x = np.linspace(0, L, n)
+    y = np.linspace(0, H, n)
     X, Y = np.meshgrid(x, y)
-    T_ana = np.full((ny, nx), side)
+    
+    th_b, th_inf = t_b - t_s, t_inf - t_s
+    C = h / k
+    Theta = np.zeros_like(X)
+    
+    for i in range(1, terms + 1):
+        m = 2 * i - 1
+        lam = m * np.pi / L
+        Bn = (4 * th_b) / (m * np.pi)
+        Cn_inf = (4 * C * th_inf) / (m * np.pi)
+        
+        # Stability: calculate sinh/cosh relative to exp(lam*H)
+        sinh_H = (1 - np.exp(-2*lam*H)) / (1 + np.exp(-2*lam*H))
+        
+        num = (Cn_inf / np.cosh(lam*H)) - Bn * (lam * sinh_H + C)
+        den = lam + C * sinh_H
+        An = num / den
+        
+        # Using exponential forms that don't explode (Y-H is always <= 0)
+        term = (An * (np.exp(lam*(Y-H)) - np.exp(-lam*(Y+H)))/2 + 
+                Bn * (np.exp(lam*(Y-H)) + np.exp(-lam*(Y+H)))/2) * np.cosh(lam*H) * np.sin(lam*X)
+        Theta += term
+        
+    return Theta + t_s
 
-    def fourier_sum(X_g, Y_g, T_bc):
-        res = np.zeros_like(X_g)
-        for n in range(1, terms*2, 2):
-            term = (4 * T_bc) / (n * np.pi) * \
-                   (np.sinh(n * np.pi * Y_g) / np.sinh(n * np.pi)) * \
-                   np.sin(n * np.pi * X_g)
-            res += term
-        return res
+# --- EXECUTION ---
+T_num, it_num, time_num = solve_numerical_convective(nx, t_inf, t_bottom, t_side, h_coeff, k_cond, solver_type, omega)
+T_ana = solve_analytical_convective(nx, t_inf, t_bottom, t_side, h_coeff, k_cond, n_terms)
 
-    T_ana += fourier_sum(X, Y, top - side)
-    T_ana += fourier_sum(X, 1 - Y, bottom - side)
-    T_ana += side
-    return T_ana
-
-#body
-T_num, iterations, exec_time = solve_numerical(nx, nx, t_top, t_bottom, t_side, solver_type, omega)
-T_ana = solve_analytical(nx, nx, t_top, t_bottom, t_side, n_terms)
-error = np.abs(T_num - T_ana)
-
-#graphsandplots
+# --- VISUALIZATION ---
 col1, col2 = st.columns(2)
 
+# FIXED PLOTLY STYLE DICTIONARY
+# Nested properties like showlines must go inside 'contours'
+style = dict(
+    ncontours=20,
+    colorscale='Inferno',
+    contours=dict(showlines=True),
+    line=dict(width=0.5, color='white'),
+    contours_coloring='heatmap'
+)
+
 with col1:
-    fig_num = go.Figure(data=go.Heatmap(z=T_num, colorscale='Inferno'))
-    fig_num.update_layout(title=f"Numerical: {solver_type}", width=500, height=500)
-    st.plotly_chart(fig_num)
-    
-    st.metric("Iterations", iterations)
-    st.metric("Execution Time", f"{exec_time:.4f}s")
+    st.subheader("Numerical Solution")
+    fig1 = go.Figure(data=go.Contour(z=T_num, **style))
+    fig1.update_layout(xaxis_title="X", yaxis_title="Y")
+    st.plotly_chart(fig1, use_container_width=True)
+    st.write(f"Steps: {it_num} | Time: {time_num:.4f}s")
 
 with col2:
-    fig_ana = go.Figure(data=go.Heatmap(z=T_ana, colorscale='Inferno'))
-    fig_ana.update_layout(title="Analytical Solution", width=500, height=500)
-    st.plotly_chart(fig_ana)
-    
-    st.metric("Max Error", f"{np.max(error):.5e} °C")
-
-st.divider()
-st.subheader("Performance Insights")
-st.write(f"Using **{solver_type}**, the solver reached steady state in **{iterations}** steps. "
-         f"Notice how increasing **ω** (between 1.5 and 1.9) significantly drops the iteration count compared to Gauss-Seidel (ω=1).")
+    st.subheader("Analytical Solution")
+    fig2 = go.Figure(data=go.Contour(z=T_ana, **style))
+    fig2.update_layout(xaxis_title="X", yaxis_title="Y")
+    st.plotly_chart(fig2, use_container_width=True)
+    st.write(f"Max Temp: {np.max(T_ana):.2f}°C")
